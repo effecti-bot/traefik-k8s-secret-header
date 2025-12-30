@@ -1,0 +1,18 @@
+---
+# IngressRoute using the secret-auth-header middleware
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: whoami-ingressroute
+  namespace: default
+spec:
+  entryPoints:
+    - web
+  routes:
+  - match: Host(`whoami.example.com`)
+    kind: Rule
+    services:
+    - name: whoami
+      port: 80
+    middlewares:
+    - name: secret-auth-header

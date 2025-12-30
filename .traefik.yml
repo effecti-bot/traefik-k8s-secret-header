@@ -1,0 +1,12 @@
+displayName: Kubernetes Secret Header
+type: middleware
+
+import: github.com/ImDevinC/traefik-k8s-secret-header
+
+summary: Inject HTTP headers from Kubernetes secrets into requests
+
+testData:
+  secretName: basic-auth-header
+  secretKey: token
+  headerName: Authorization
+  namespace: default

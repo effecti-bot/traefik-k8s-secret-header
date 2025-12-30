@@ -1,0 +1,15 @@
+---
+# Traefik Middleware for HTTPRoute
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: secret-auth-header
+  namespace: default
+spec:
+  plugin:
+    k8s-secret-header:
+      secretName: basic-auth-header
+      secretKey: token
+      headerName: Authorization
+      namespace: default
+      cacheTTL: 300

@@ -1,0 +1,58 @@
+---
+# ServiceAccount for Traefik
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik
+  namespace: traefik
+---
+# Role to read secrets in the default namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: traefik-secret-reader
+  namespace: default
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+---
+# RoleBinding to bind the role to the ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: traefik-secret-reader
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: traefik-secret-reader
+subjects:
+- kind: ServiceAccount
+  name: traefik
+  namespace: traefik
+---
+# ClusterRole for reading secrets across all namespaces (optional)
+# Use this if you need to read secrets from multiple namespaces
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: traefik-secret-reader
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+---
+# ClusterRoleBinding (optional - for cross-namespace access)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: traefik-secret-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: traefik-secret-reader
+subjects:
+- kind: ServiceAccount
+  name: traefik
+  namespace: traefik

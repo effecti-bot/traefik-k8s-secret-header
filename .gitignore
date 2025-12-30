@@ -1,0 +1,8 @@
+# Traefik K8s Secret Header Plugin
+
+# Note: vendor/ is NOT ignored because Traefik plugins require vendored dependencies
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
