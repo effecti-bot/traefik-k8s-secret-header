@@ -52,7 +52,7 @@ For cross-namespace access, use the ClusterRole and ClusterRoleBinding defined i
 
 ### Step 2: Configure Traefik Static Configuration
 
-Add the plugin to your Traefik static configuration. The method depends on how you deploy Traefik:
+Add the plugin to your Traefik static configuration:
 
 #### Helm Values (Recommended for Helm deployments)
 
@@ -60,7 +60,7 @@ Add the plugin to your Traefik static configuration. The method depends on how y
 experimental:
   plugins:
     k8s-secret-header:
-      moduleName: github.com/yourusername/traefik-k8s-secret-header
+      moduleName: github.com/ImDevinC/traefik-k8s-secret-header
       version: v1.0.0
 
 # Ensure Traefik uses the service account with secret read permissions
@@ -74,14 +74,14 @@ serviceAccount:
 experimental:
   plugins:
     k8s-secret-header:
-      moduleName: github.com/yourusername/traefik-k8s-secret-header
+      moduleName: github.com/ImDevinC/traefik-k8s-secret-header
       version: v1.0.0
 ```
 
 #### Command Line Arguments
 
 ```bash
---experimental.plugins.k8s-secret-header.moduleName=github.com/yourusername/traefik-k8s-secret-header
+--experimental.plugins.k8s-secret-header.moduleName=github.com/ImDevinC/traefik-k8s-secret-header
 --experimental.plugins.k8s-secret-header.version=v1.0.0
 ```
 

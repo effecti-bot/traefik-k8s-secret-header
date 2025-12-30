@@ -3,15 +3,16 @@ package k8ssecretheader
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sync"
 	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 )
 
 // Config holds the plugin configuration.
@@ -35,8 +36,20 @@ type SecretHeader struct {
 	next      http.Handler
 	name      string
 	config    *Config
-	k8sClient *kubernetes.Clientset
+	k8sClient *k8sClient
 	cache     *secretCache
+}
+
+// k8sClient handles communication with the Kubernetes API.
+type k8sClient struct {
+	httpClient *http.Client
+	baseURL    string
+	token      string
+}
+
+// k8sSecret represents the Kubernetes Secret API response.
+type k8sSecret struct {
+	Data map[string]string `json:"data"` // base64 encoded values
 }
 
 // secretCache provides caching for secret values.
@@ -65,6 +78,82 @@ func (c *secretCache) set(value string) {
 	c.lastFetch = time.Now()
 }
 
+// newK8sClient creates a new Kubernetes API client using in-cluster config.
+func newK8sClient() (*k8sClient, error) {
+	// Read the service account token
+	tokenBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read service account token: %w", err)
+	}
+
+	// Read the CA certificate
+	caCert, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+	}
+
+	// Create cert pool with CA
+	caCertPool := x509.NewCertPool()
+	if !caCertPool.AppendCertsFromPEM(caCert) {
+		return nil, fmt.Errorf("failed to parse CA certificate")
+	}
+
+	// Get Kubernetes API server URL
+	host := os.Getenv("KUBERNETES_SERVICE_HOST")
+	port := os.Getenv("KUBERNETES_SERVICE_PORT")
+	if host == "" || port == "" {
+		return nil, fmt.Errorf("KUBERNETES_SERVICE_HOST or KUBERNETES_SERVICE_PORT not set")
+	}
+
+	// Create HTTP client with TLS config
+	httpClient := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				RootCAs:    caCertPool,
+				MinVersion: tls.VersionTLS12,
+			},
+		},
+	}
+
+	return &k8sClient{
+		httpClient: httpClient,
+		baseURL:    fmt.Sprintf("https://%s:%s", host, port),
+		token:      string(tokenBytes),
+	}, nil
+}
+
+// getSecret retrieves a secret from the Kubernetes API.
+func (c *k8sClient) getSecret(ctx context.Context, namespace, name string) (*k8sSecret, error) {
+	url := fmt.Sprintf("%s/api/v1/namespaces/%s/secrets/%s", c.baseURL, namespace, name)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("kubernetes API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var secret k8sSecret
+	if err := json.NewDecoder(resp.Body).Decode(&secret); err != nil {
+		return nil, fmt.Errorf("failed to decode secret response: %w", err)
+	}
+
+	return &secret, nil
+}
+
 // New creates a new SecretHeader plugin.
 func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
 	if config.SecretName == "" {
@@ -82,13 +171,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		config.Namespace = "default"
 	}
 
-	// Create in-cluster Kubernetes client
-	k8sConfig, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create in-cluster config: %w", err)
-	}
-
-	clientset, err := kubernetes.NewForConfig(k8sConfig)
+	// Create Kubernetes API client
+	k8sClient, err := newK8sClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
@@ -97,14 +181,14 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		ttl: time.Duration(config.CacheTTL) * time.Second,
 	}
 
-	os.Stdout.WriteString(fmt.Sprintf("[k8s-secret-header] Plugin '%s' initialized: secret=%s/%s key=%s header=%s ttl=%ds\n",
-		name, config.Namespace, config.SecretName, config.SecretKey, config.HeaderName, config.CacheTTL))
+	fmt.Printf("[k8s-secret-header] Plugin '%s' initialized: secret=%s/%s key=%s header=%s ttl=%ds\n",
+		name, config.Namespace, config.SecretName, config.SecretKey, config.HeaderName, config.CacheTTL)
 
 	return &SecretHeader{
 		next:      next,
 		name:      name,
 		config:    config,
-		k8sClient: clientset,
+		k8sClient: k8sClient,
 		cache:     cache,
 	}, nil
 }
@@ -118,34 +202,33 @@ func (s *SecretHeader) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Cache miss - fetch from Kubernetes
-	secret, err := s.k8sClient.CoreV1().Secrets(s.config.Namespace).Get(
-		req.Context(),
-		s.config.SecretName,
-		metav1.GetOptions{},
-	)
+	secret, err := s.k8sClient.getSecret(req.Context(), s.config.Namespace, s.config.SecretName)
 	if err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("[k8s-secret-header] Failed to get secret %s/%s: %v\n",
-			s.config.Namespace, s.config.SecretName, err))
+		fmt.Fprintf(os.Stderr, "[k8s-secret-header] Failed to get secret %s/%s: %v\n",
+			s.config.Namespace, s.config.SecretName, err)
 		http.Error(rw, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	// Get the secret value
-	secretValue, ok := secret.Data[s.config.SecretKey]
+	// Get the secret value (base64 encoded in the API response)
+	encodedValue, ok := secret.Data[s.config.SecretKey]
 	if !ok {
-		os.Stderr.WriteString(fmt.Sprintf("[k8s-secret-header] Secret key '%s' not found in secret %s/%s\n",
-			s.config.SecretKey, s.config.Namespace, s.config.SecretName))
+		fmt.Fprintf(os.Stderr, "[k8s-secret-header] Secret key '%s' not found in secret %s/%s\n",
+			s.config.SecretKey, s.config.Namespace, s.config.SecretName)
 		http.Error(rw, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	// Decode the secret value if it's base64 encoded (Kubernetes secrets are base64)
-	// Since secret.Data returns []byte, we convert it to string
-	value := string(secretValue)
+	// Decode base64 value
+	// The Kubernetes API returns secret data as base64-encoded strings in JSON
+	decodedValue, err := base64.StdEncoding.DecodeString(encodedValue)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[k8s-secret-header] Failed to decode secret value: %v\n", err)
+		http.Error(rw, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 
-	// Check if it's base64 encoded and needs decoding
-	// For Opaque secrets, the data is already decoded by the client-go library
-	// So we can use it directly
+	value := string(decodedValue)
 
 	// Cache the value
 	s.cache.set(value)
