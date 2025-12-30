@@ -1,0 +1,201 @@
+---
+# Complete example for deploying Traefik with the k8s-secret-header plugin
+# This uses an init container to download the plugin from GitHub
+
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: traefik
+---
+# ServiceAccount for Traefik
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik
+  namespace: traefik
+---
+# ClusterRole for Traefik (standard permissions)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: traefik
+rules:
+- apiGroups: [""]
+  resources: ["services", "endpoints", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["extensions", "networking.k8s.io"]
+  resources: ["ingresses", "ingressclasses"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["extensions", "networking.k8s.io"]
+  resources: ["ingresses/status"]
+  verbs: ["update"]
+- apiGroups: ["traefik.io", "traefik.containo.us"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch"]
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: traefik
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: traefik
+subjects:
+- kind: ServiceAccount
+  name: traefik
+  namespace: traefik
+---
+# Traefik Static Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: traefik-config
+  namespace: traefik
+data:
+  traefik.yml: |
+    # Plugin configuration - using LOCAL mode
+    experimental:
+      localPlugins:
+        k8s-secret-header:
+          moduleName: github.com/ImDevinC/traefik-k8s-secret-header
+    
+    # Entry points
+    entryPoints:
+      web:
+        address: ":80"
+      websecure:
+        address: ":443"
+    
+    # Enable API and Dashboard
+    api:
+      dashboard: true
+      insecure: true
+    
+    # Providers
+    providers:
+      kubernetesCRD:
+        allowCrossNamespace: true
+      kubernetesGateway: {}
+    
+    # Logging
+    log:
+      level: INFO
+    
+    accessLog: {}
+---
+# Traefik Deployment with Plugin Init Container
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  namespace: traefik
+  labels:
+    app: traefik
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traefik
+  template:
+    metadata:
+      labels:
+        app: traefik
+    spec:
+      serviceAccountName: traefik
+      
+      volumes:
+      - name: config
+        configMap:
+          name: traefik-config
+      - name: plugins
+        emptyDir: {}
+      
+      initContainers:
+      - name: plugin-installer
+        image: alpine/git:latest
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          echo "==================================="
+          echo "Installing k8s-secret-header plugin"
+          echo "==================================="
+          
+          mkdir -p /plugins-local/src/github.com/ImDevinC
+          cd /plugins-local/src/github.com/ImDevinC
+          
+          echo "Cloning plugin repository..."
+          git clone --depth 1 --branch v1.0.0 https://github.com/ImDevinC/traefik-k8s-secret-header.git
+          
+          echo ""
+          echo "Plugin files:"
+          ls -la /plugins-local/src/github.com/ImDevinC/traefik-k8s-secret-header/
+          
+          echo ""
+          echo "Plugin installed successfully!"
+          echo "==================================="
+        volumeMounts:
+        - name: plugins
+          mountPath: /plugins-local
+      
+      containers:
+      - name: traefik
+        image: traefik:v3.2
+        args:
+        - --configFile=/config/traefik.yml
+        ports:
+        - name: web
+          containerPort: 80
+        - name: websecure
+          containerPort: 443
+        - name: admin
+          containerPort: 8080
+        volumeMounts:
+        - name: config
+          mountPath: /config
+        - name: plugins
+          mountPath: /plugins-local
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+# Traefik Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik
+  namespace: traefik
+spec:
+  type: LoadBalancer
+  selector:
+    app: traefik
+  ports:
+  - name: web
+    port: 80
+    targetPort: web
+  - name: websecure
+    port: 443
+    targetPort: websecure
+  - name: admin
+    port: 8080
+    targetPort: admin
