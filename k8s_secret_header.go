@@ -1,5 +1,5 @@
-// Package k8ssecretheader is a Traefik plugin that injects HTTP headers from Kubernetes secrets.
-package k8ssecretheader
+// Package traefik_k8s_secret_header is a Traefik plugin that injects HTTP headers from Kubernetes secrets.
+package traefik_k8s_secret_header
 
 import (
 	"context"

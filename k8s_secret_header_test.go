@@ -1,4 +1,4 @@
-package k8ssecretheader
+package traefik_k8s_secret_header
 
 import (
 	"encoding/base64"
