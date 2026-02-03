@@ -20,7 +20,7 @@ type Config struct {
 	SecretName string `json:"secretName,omitempty"`
 	SecretKey  string `json:"secretKey,omitempty"`
 	HeaderName string `json:"headerName,omitempty"`
-	HeaderPrefix string `json:"headerPrefix,omitempty"` // Optional prefix to add before the secret value (e.g., "Bearer ")
+	ValuePrefix string `json:"ValuePrefix,omitempty"` // Optional prefix to add before the secret value (e.g., "Bearer ")
 	Namespace  string `json:"namespace,omitempty"`
 	CacheTTL   int    `json:"cacheTTL,omitempty"` // Cache TTL in seconds, default 300 (5 minutes)
 }
@@ -183,8 +183,8 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	}
 
 	prefixInfo := ""
-    if config.HeaderPrefix != "" {
-    	prefixInfo = fmt.Sprintf(" prefix='%s'", config.HeaderPrefix)
+    if config.ValuePrefix != "" {
+    	prefixInfo = fmt.Sprintf(" prefix='%s'", config.ValuePrefix)
     }
     fmt.Printf("[k8s-secret-header] Plugin '%s' initialized: secret=%s/%s key=%s header=%s%s ttl=%ds\n",
     	name, config.Namespace, config.SecretName, config.SecretKey, config.HeaderName, prefixInfo, config.CacheTTL)
@@ -201,7 +201,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 func (s *SecretHeader) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// Try to get from cache first
 	if value, ok := s.cache.get(); ok {
-		headerValue := s.config.HeaderPrefix + value
+		headerValue := s.config.ValuePrefix + value
 		req.Header.Set(s.config.HeaderName, headerValue)
 		s.next.ServeHTTP(rw, req)
 		return
@@ -240,7 +240,7 @@ func (s *SecretHeader) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	s.cache.set(value)
 
 	// Set the header with optional prefix
-	headerValue := s.config.HeaderPrefix + value
+	headerValue := s.config.ValuePrefix + value
 	req.Header.Set(s.config.HeaderName, headerValue)
 
 	s.next.ServeHTTP(rw, req)
