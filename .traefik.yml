@@ -1,7 +1,7 @@
 displayName: Kubernetes Secret Header
 type: middleware
 
-import: github.com/ImDevinC/traefik-k8s-secret-header
+import: github.com/effecti-bot/traefik-k8s-secret-header
 
 summary: Inject HTTP headers from Kubernetes secrets into requests
 
